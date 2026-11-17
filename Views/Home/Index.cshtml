@@ -1,0 +1,168 @@
+﻿@model TranslateViewModel
+@{
+    ViewData["Title"] = "Перекладач";
+}
+
+<div class="translator">
+
+    <div class="text-center mb-4">
+        <h1 class="display-6 fw-semibold">🌐 Azure Перекладач</h1>
+        <p class="text-muted mb-0">
+            Введіть текст і виберіть мови. Мову оригіналу визначимо автоматично.
+        </p>
+    </div>
+
+    <!-- Форма -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-body p-4">
+            <form asp-action="Index" method="post" id="translate-form">
+
+                <div class="mb-3">
+                    <label asp-for="Text" class="form-label fw-semibold">Текст для перекладу</label>
+                    <textarea asp-for="Text" class="form-control" rows="5" maxlength="5000"
+                              placeholder="Наприклад: Привіт! Як у тебе справи?"></textarea>
+                    <span asp-validation-for="Text" class="text-danger small"></span>
+                </div>
+
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="fw-semibold">Мови перекладу</span>
+                        <span class="small">
+                            <a href="#" id="select-all">Вибрати всі</a> ·
+                            <a href="#" id="select-none">Зняти всі</a>
+                        </span>
+                    </div>
+
+                    <div class="d-flex flex-wrap gap-2">
+                        @foreach (var lang in Languages.Supported)
+                        {
+                            var id = "lang-" + lang.Key;
+                            <input type="checkbox" class="btn-check" name="TargetLanguages" value="@lang.Key"
+                                   id="@id" autocomplete="off" checked="@Model.TargetLanguages.Contains(lang.Key)" />
+                            <label class="btn btn-outline-primary btn-sm" for="@id">@lang.Value</label>
+                        }
+                    </div>
+                    <span asp-validation-for="TargetLanguages" class="text-danger small d-block mt-2"></span>
+                </div>
+
+                <button type="submit" class="btn btn-primary px-4" id="translate-btn">
+                    <span class="spinner-border spinner-border-sm d-none me-1" id="translate-spinner"></span>
+                    <span id="translate-label">Перекласти</span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Помилка -->
+    @if (Model.ErrorMessage != null)
+    {
+        <div class="alert alert-danger" role="alert">
+            <strong>⚠️ Не вдалося виконати переклад.</strong><br />
+            @Model.ErrorMessage
+        </div>
+    }
+
+    <!-- Результат -->
+    @if (Model.Result != null)
+    {
+        <div class="alert alert-info">
+            🔍 Визначена мова тексту:
+            <strong>@Model.Result.DetectedLanguageName</strong>
+            (<code>@Model.Result.DetectedLanguageCode</code>),
+            впевненість @(Math.Round(Model.Result.DetectedScore * 100))%
+        </div>
+
+        <div class="row g-3 mb-4">
+            @foreach (var t in Model.Result.Translations)
+            {
+                <div class="col-md-6">
+                    <div class="card h-100 shadow-sm">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span class="fw-semibold">@t.LanguageName</span>
+                            <span class="badge bg-secondary">@t.LanguageCode</span>
+                        </div>
+                        <div class="card-body">
+                            <p class="translation-text mb-0">@t.Text</p>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    <!-- Історія -->
+    <div class="card shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span class="fw-semibold">🕘 Історія перекладів (@Model.History.Count)</span>
+            @if (Model.History.Any())
+            {
+                <form asp-action="ClearHistory" method="post" class="m-0">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Очистити</button>
+                </form>
+            }
+        </div>
+
+        @if (!Model.History.Any())
+        {
+            <div class="card-body text-muted">Поки що порожньо. Тут з'являться попередні переклади.</div>
+        }
+        else
+        {
+            <ul class="list-group list-group-flush">
+                @foreach (var h in Model.History)
+                {
+                    <li class="list-group-item">
+                        <div class="small text-muted mb-1">
+                            @h.Time.ToString("HH:mm:ss") ·
+                            @h.Result.DetectedLanguageName →
+                            @(string.Join(", ", h.Result.Translations.Select(t => t.LanguageName)))
+                        </div>
+                        <div class="fw-semibold mb-1 translation-text">@h.SourceText</div>
+                        <ul class="small mb-0 ps-3">
+                            @foreach (var t in h.Result.Translations)
+                            {
+                                <li><span class="text-muted">@t.LanguageName:</span> @t.Text</li>
+                            }
+                        </ul>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+    <script>
+        const form = document.getElementById('translate-form');
+        const boxes = () => form.querySelectorAll('input[name="TargetLanguages"]');
+
+        document.getElementById('select-all').addEventListener('click', e => {
+            e.preventDefault();
+            boxes().forEach(c => c.checked = true);
+        });
+        document.getElementById('select-none').addEventListener('click', e => {
+            e.preventDefault();
+            boxes().forEach(c => c.checked = false);
+        });
+
+        form.addEventListener('submit', e => {
+            const langMsg = form.querySelector('[data-valmsg-for="TargetLanguages"]');
+            const checked = form.querySelectorAll('input[name="TargetLanguages"]:checked').length;
+
+            if (checked === 0) {
+                e.preventDefault();
+                langMsg.textContent = 'Виберіть хоча б одну мову перекладу.';
+                return;
+            }
+            langMsg.textContent = '';
+
+            if (window.jQuery && !$(form).valid()) return;
+
+            // Показуємо, що йде переклад
+            document.getElementById('translate-btn').disabled = true;
+            document.getElementById('translate-spinner').classList.remove('d-none');
+            document.getElementById('translate-label').textContent = 'Перекладаю...';
+        });
+    </script>
+}
