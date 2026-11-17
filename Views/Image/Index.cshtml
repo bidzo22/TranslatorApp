@@ -1,0 +1,241 @@
+@model ImageAnalysisViewModel
+@{
+    ViewData["Title"] = "Image Translator";
+    string[] colors = { "#e6194b", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#42d4f4", "#f032e6", "#bfef45" };
+    string Pct(double v) => Math.Round(v * 100).ToString() + "%";
+    var a = Model.Analysis;
+}
+
+<div class="translator">
+
+    <div class="text-center mb-4">
+        <h1 class="display-6 fw-semibold">🖼️ Image Translator</h1>
+        <p class="text-muted mb-0">
+            Завантажте зображення — Azure AI Vision знайде текст, об'єкти й теги, а Azure Translator перекладе текст.
+        </p>
+    </div>
+
+    <div class="card shadow-sm mb-4">
+        <div class="card-body p-4">
+            <form asp-action="Index" method="post" enctype="multipart/form-data" id="image-form">
+
+                <div class="mb-3">
+                    <label for="image" class="form-label fw-semibold">Зображення</label>
+                    <input type="file" class="form-control" id="image" name="image"
+                           accept=".jpg,.jpeg,.png,.bmp,.gif,.webp" />
+                    <div class="form-text">JPG, PNG, BMP, GIF, WEBP · до 20 МБ · мінімум 50×50 px</div>
+                    @if (ViewData.ModelState["image"]?.Errors.Count > 0)
+                    {
+                        <span class="text-danger small">@ViewData.ModelState["image"]!.Errors[0].ErrorMessage</span>
+                    }
+                    <img id="preview" class="img-thumbnail mt-2 d-none" style="max-height:160px" alt="preview" />
+                </div>
+
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <span class="fw-semibold">Мови перекладу тексту</span>
+                        <span class="small">
+                            <a href="#" id="select-all">Вибрати всі</a> ·
+                            <a href="#" id="select-none">Зняти всі</a>
+                        </span>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2">
+                        @foreach (var lang in Languages.Supported)
+                        {
+                            var id = "lang-" + lang.Key;
+                            <input type="checkbox" class="btn-check" name="TargetLanguages" value="@lang.Key"
+                                   id="@id" autocomplete="off" checked="@Model.TargetLanguages.Contains(lang.Key)" />
+                            <label class="btn btn-outline-primary btn-sm" for="@id">@lang.Value</label>
+                        }
+                    </div>
+                    <span asp-validation-for="TargetLanguages" class="text-danger small d-block mt-2"></span>
+                </div>
+
+                <button type="submit" class="btn btn-primary px-4" id="analyze-btn">
+                    <span class="spinner-border spinner-border-sm d-none me-1" id="analyze-spinner"></span>
+                    <span id="analyze-label">Аналізувати</span>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    @if (Model.ErrorMessage != null)
+    {
+        <div class="alert alert-danger"><strong>⚠️ Помилка.</strong><br />@Model.ErrorMessage</div>
+    }
+
+    @if (a != null)
+    {
+        @if (Model.BlobName != null)
+        {
+            <div class="alert alert-success small">
+                ☁️ Зображення збережено в Azure Blob Storage: <code>@Model.BlobName</code>.
+                Аналіз виконано по збереженому файлу.
+            </div>
+        }
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span class="fw-semibold">📍 Знайдені об'єкти на зображенні</span>
+                <div class="form-check form-switch m-0">
+                    <input class="form-check-input" type="checkbox" id="toggle-boxes" checked />
+                    <label class="form-check-label small" for="toggle-boxes">Показати рамки</label>
+                </div>
+            </div>
+            <div class="card-body text-center">
+                <div class="image-box">
+                    <img src="@Model.ImageUrl" alt="Завантажене зображення" />
+                    <svg class="bbox-layer" id="bbox-layer"
+                         viewBox="0 0 @a.ImageWidth @a.ImageHeight" preserveAspectRatio="none">
+                        @for (var i = 0; i < a.Objects.Count; i++)
+                        {
+                            var o = a.Objects[i];
+                            var c = colors[i % colors.Length];
+                            var fs = Math.Max(12, a.ImageWidth / 45);
+                            var labelY = o.Y > fs + 4 ? o.Y - 4 : o.Y + fs + 2;
+                            <g class="bbox" data-index="@i">
+                                <rect x="@o.X" y="@o.Y" width="@o.Width" height="@o.Height"
+                                      stroke="@c" vector-effect="non-scaling-stroke" />
+                                @Html.Raw($"<text x=\"{o.X + 2}\" y=\"{labelY}\" fill=\"{c}\" font-size=\"{fs}\">{System.Net.WebUtility.HtmlEncode(o.Name)} {Pct(o.Confidence)}</text>")
+                            </g>
+                        }
+                    </svg>
+                </div>
+                <div class="small text-muted mt-2">Розмір: @a.ImageWidth × @a.ImageHeight px</div>
+            </div>
+        </div>
+
+        <div class="row g-3 mb-4">
+            <div class="col-md-6">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-header fw-semibold">📦 Об'єкти (@a.Objects.Count)</div>
+                    @if (a.Objects.Count == 0)
+                    {
+                        <div class="card-body text-muted">Об'єктів не знайдено.</div>
+                    }
+                    else
+                    {
+                        <table class="table table-sm table-hover mb-0 align-middle">
+                            <thead><tr><th></th><th>Назва</th><th>Впевненість</th><th>BoundingBox (x, y, w, h)</th></tr></thead>
+                            <tbody>
+                                @for (var i = 0; i < a.Objects.Count; i++)
+                                {
+                                    var o = a.Objects[i];
+                                    <tr class="obj-row" data-index="@i">
+                                        <td><span class="color-dot" style="background:@colors[i % colors.Length]"></span></td>
+                                        <td class="fw-semibold">@o.Name</td>
+                                        <td>@Pct(o.Confidence)</td>
+                                        <td class="small text-muted">@o.X, @o.Y, @o.Width, @o.Height</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+
+            <div class="col-md-6">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-header fw-semibold">🏷️ Теги (@a.Tags.Count)</div>
+                    @if (a.Tags.Count == 0)
+                    {
+                        <div class="card-body text-muted">Тегів не знайдено.</div>
+                    }
+                    else
+                    {
+                        <ul class="list-group list-group-flush">
+                            @foreach (var t in a.Tags)
+                            {
+                                <li class="list-group-item py-2">
+                                    <div class="d-flex justify-content-between small">
+                                        <span class="fw-semibold">@t.Name</span>
+                                        <span>@Pct(t.Confidence)</span>
+                                    </div>
+                                    <div class="progress" style="height:5px">
+                                        <div class="progress-bar" style="width:@Pct(t.Confidence)"></div>
+                                    </div>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mb-4">
+            <div class="card-header fw-semibold">🔤 Розпізнаний текст</div>
+            <div class="card-body">
+                @if (string.IsNullOrWhiteSpace(a.Text))
+                {
+                    <span class="text-muted">Текст на зображенні не знайдено.</span>
+                }
+                else
+                {
+                    <p class="translation-text mb-0">@a.Text</p>
+                }
+            </div>
+        </div>
+
+        @if (Model.TranslationError != null)
+        {
+            <div class="alert alert-warning"><strong>Текст розпізнано, але переклад не вдався.</strong><br />@Model.TranslationError</div>
+        }
+
+        @if (Model.Translation != null)
+        {
+            <div class="alert alert-info">
+                🔍 Мова тексту: <strong>@Model.Translation.DetectedLanguageName</strong>
+                (<code>@Model.Translation.DetectedLanguageCode</code>),
+                впевненість @Pct(Model.Translation.DetectedScore)
+            </div>
+            <div class="row g-3 mb-4">
+                @foreach (var t in Model.Translation.Translations)
+                {
+                    <div class="col-md-6">
+                        <div class="card h-100 shadow-sm">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <span class="fw-semibold">@t.LanguageName</span>
+                                <span class="badge bg-secondary">@t.LanguageCode</span>
+                            </div>
+                            <div class="card-body"><p class="translation-text mb-0">@t.Text</p></div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@section Scripts {
+    <script>
+        const form = document.getElementById('image-form');
+        const boxes = () => form.querySelectorAll('input[name="TargetLanguages"]');
+        document.getElementById('select-all').addEventListener('click', e => { e.preventDefault(); boxes().forEach(c => c.checked = true); });
+        document.getElementById('select-none').addEventListener('click', e => { e.preventDefault(); boxes().forEach(c => c.checked = false); });
+
+        document.getElementById('image').addEventListener('change', e => {
+            const file = e.target.files[0];
+            const img = document.getElementById('preview');
+            if (!file) { img.classList.add('d-none'); return; }
+            img.src = URL.createObjectURL(file);
+            img.classList.remove('d-none');
+        });
+
+        form.addEventListener('submit', () => {
+            document.getElementById('analyze-btn').disabled = true;
+            document.getElementById('analyze-spinner').classList.remove('d-none');
+            document.getElementById('analyze-label').textContent = 'Аналізую...';
+        });
+
+        const layer = document.getElementById('bbox-layer');
+        document.getElementById('toggle-boxes')?.addEventListener('change', e => {
+            layer.style.display = e.target.checked ? '' : 'none';
+        });
+
+        document.querySelectorAll('.obj-row').forEach(row => {
+            const box = layer?.querySelector(`.bbox[data-index="${row.dataset.index}"]`);
+            row.addEventListener('mouseenter', () => { layer.classList.add('dim'); box?.classList.add('active'); });
+            row.addEventListener('mouseleave', () => { layer.classList.remove('dim'); box?.classList.remove('active'); });
+        });
+    </script>
+}
